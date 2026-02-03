@@ -34,7 +34,7 @@ struct model; // forward declaration
 struct igrid { // grids interface (that cache, etc. conform to)
 	virtual fl eval      (const model& m, fl v) const = 0; // needs m.coords // clean up
 	virtual fl eval_deriv(      model& m, fl v) const = 0; // needs m.coords, sets m.minus_forces // clean up
-    virtual std::vector<grid> get_grids() const = 0;
+    virtual const std::vector<grid>& get_grids() const = 0;
     virtual int get_atu() const = 0;
     virtual double get_slope() const = 0;
 };

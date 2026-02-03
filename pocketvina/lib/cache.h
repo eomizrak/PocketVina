@@ -66,7 +66,7 @@ struct cache : public igrid {
 	*/
 	fl eval      (const model& m, fl v) const; // needs m.coords // clean up
 	fl eval_deriv(      model& m, fl v) const; // needs m.coords, sets m.minus_forces // clean up
-	std::vector<grid> get_grids()const;
+	const std::vector<grid>& get_grids() const;
 	int get_atu()const;
 	double get_slope() const;
 

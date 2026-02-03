@@ -33,7 +33,7 @@ struct naive_non_cache : public igrid {
 	naive_non_cache(const precalculate* p_);
 	virtual fl eval      (const model& m, fl v) const; // needs m.coords
 	virtual fl eval_deriv(      model& m, fl v) const { VINA_CHECK(false); return 0; } // unused
-	virtual std::vector<grid> get_grids()const;
+	virtual const std::vector<grid>& get_grids() const;
 	virtual int get_atu()const;
 	virtual double get_slope()const;
 private:

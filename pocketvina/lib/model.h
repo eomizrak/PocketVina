@@ -365,6 +365,9 @@ private:
 	      atom& get_atom(const atom_index& i)       { return (i.in_grid ? grid_atoms[i.i] : atoms[i.i]); }
 
 
+	void build_atom_to_ligand();
+
+
 	//1.声明一个常量函数write_context，输入context容器对象和一个文件输出流，无返回
 	void write_context(const context& c, ofile& out) const;
 	

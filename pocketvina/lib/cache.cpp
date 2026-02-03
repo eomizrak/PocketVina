@@ -136,7 +136,7 @@ fl cache::eval_deriv(      model& m, fl v) const { // needs m.coords, sets m.min
 * Added by Glinttsd
 * Function to get grids
 */
-std::vector<grid> cache::get_grids() const{
+const std::vector<grid>& cache::get_grids() const {
 	return this->grids;
 }
 /*

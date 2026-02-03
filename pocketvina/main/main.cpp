@@ -151,6 +151,7 @@ output_container remove_redundant(const output_container& in, fl min_rmsd) {
 	output_container tmp;
 	VINA_FOR_IN(i, in)
 		add_to_output_container(tmp, in[i], min_rmsd, in.size());
+	tmp.sort();
 	return tmp;
 }
 

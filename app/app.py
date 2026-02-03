@@ -59,10 +59,10 @@ def create_sortable_table(df, output_dir: Optional[str] = None):
     """Create a sortable HTML table from DataFrame"""
     if df.empty:
         return '<p class="text-muted">No results to display</p>'
-    
+
     # Start table HTML
     html = ['<table class="table table-striped table-hover" id="results-table">']
-    
+
     # Create header with sortable buttons
     html.append('<thead class="table-dark">')
     html.append('<tr>')
@@ -81,55 +81,65 @@ def create_sortable_table(df, output_dir: Optional[str] = None):
     html.append('<th>3D</th>')
     html.append('</tr>')
     html.append('</thead>')
-    
+
     # Create body
     html.append('<tbody>')
+    cols = list(df.columns)
+    cols_lower = [c.lower() for c in cols]
+    protein_keys = {'protein', 'protein_file', 'protein_path'}
+    ligand_keys = {'ligand', 'ligand_file', 'output_file', 'pdbqt_file', 'result_file'}
+    mol_keys = {'molecule_name', 'ligand_name'}
+
+    ligand_candidates = None
+
+    def first_value(row, keys):
+        for idx, col_lower in enumerate(cols_lower):
+            if col_lower in keys:
+                val = row[idx]
+                return str(val) if not pd.isna(val) else None
+        return None
+
+    def get_ligand_candidates():
+        nonlocal ligand_candidates
+        if ligand_candidates is not None:
+            return ligand_candidates
+        ligand_candidates = []
+        if not output_dir:
+            return ligand_candidates
+        try:
+            for item in os.listdir(output_dir):
+                item_path = os.path.join(output_dir, item)
+                if os.path.isdir(item_path) and item.startswith('batch_') and item.endswith('_out'):
+                    for root, _, files in os.walk(item_path):
+                        for f in files:
+                            if f.lower().endswith('.pdbqt'):
+                                ligand_candidates.append((f.lower(), os.path.join(root, f)))
+        except Exception as _e:
+            ligand_candidates = []
+        return ligand_candidates
+
     row_counter = 0
-    for _, row in df.iterrows():
+    for row in df.itertuples(index=False, name=None):
         html.append('<tr>')
         # Pre-compute protein and ligand values for inline viewer
-        protein_value = None
-        for pcol, pval in row.items():
-            if pcol.lower() in ['protein', 'protein_file', 'protein_path']:
-                protein_value = str(pval) if not pd.isna(pval) else None
-                break
+        protein_value = first_value(row, protein_keys)
+        ligand_value = first_value(row, ligand_keys)
 
-        ligand_value = None
-        for lcol, lval in row.items():
-            if lcol.lower() in ['ligand', 'ligand_file', 'output_file', 'pdbqt_file', 'result_file']:
-                ligand_value = str(lval) if not pd.isna(lval) else None
-                break
         # Try to derive ligand path if missing using molecule_name and output_dir search
         if not ligand_value and output_dir:
-            # molecule name column candidates
-            mol_name = None
-            for mcol, mval in row.items():
-                if mcol.lower() in ['molecule_name', 'ligand_name']:
-                    mol_name = str(mval) if not pd.isna(mval) else None
-                    break
+            mol_name = first_value(row, mol_keys)
             if mol_name and protein_value:
                 try:
                     protein_base = (protein_value.split('/')[-1] if '/' in protein_value else protein_value)
                     protein_base = protein_base.replace('.pdb', '')
-                    # search batch_*_out for files containing protein_base and mol_name
-                    found_path = None
-                    for item in os.listdir(output_dir):
-                        item_path = os.path.join(output_dir, item)
-                        if os.path.isdir(item_path) and item.startswith('batch_') and item.endswith('_out'):
-                            for root, dirs, files in os.walk(item_path):
-                                for f in files:
-                                    if not f.lower().endswith('.pdbqt'):
-                                        continue
-                                    name_l = f.lower()
-                                    if protein_base.lower() in name_l and mol_name.lower().replace(' ', '_') in name_l:
-                                        found_path = os.path.join(root, f)
-                                        break
-                                if found_path:
-                                    break
-                        if found_path:
-                            break
-                    if found_path:
-                        ligand_value = found_path
+                    candidates = get_ligand_candidates()
+                    if candidates:
+                        target_protein = protein_base.lower()
+                        target_mol = mol_name.lower().replace(' ', '_')
+                        for name_l, path in candidates:
+                            if target_protein in name_l and target_mol in name_l:
+                                ligand_value = path
+                                break
                 except Exception as _e:
                     pass
 
@@ -141,7 +151,8 @@ def create_sortable_table(df, output_dir: Optional[str] = None):
                 if base_name in prot_filename or prot_filename.replace('.pdb', '').replace('-pocket1', '').replace('-pocket2', '').replace('-pocket3', '') in base_name:
                     processed_protein_file = files.get('processed_pdb')
                     break
-        for col_idx, (col_name, value) in enumerate(row.items()):
+
+        for col_idx, (col_name, value) in enumerate(zip(cols, row)):
             # Format numeric values
             if pd.api.types.is_numeric_dtype(type(value)) and not pd.isna(value):
                 if isinstance(value, float):
@@ -150,7 +161,7 @@ def create_sortable_table(df, output_dir: Optional[str] = None):
                     formatted_value = str(value)
             else:
                 formatted_value = str(value) if not pd.isna(value) else "N/A"
-            
+
             # Add 3D view button for certain columns
             if col_name.lower() in ['protein', 'protein_file', 'protein_path'] and formatted_value != "N/A":
                 # For Mol* integration, we only display the protein name here.
@@ -158,30 +169,17 @@ def create_sortable_table(df, output_dir: Optional[str] = None):
                 filename = formatted_value.split('/')[-1] if '/' in formatted_value else formatted_value
                 html.append(f'''<td>{filename}</td>''')
             elif col_name.lower() in ['ligand', 'ligand_file', 'output_file', 'pdbqt_file'] and formatted_value != "N/A":
-                # Get corresponding protein file for complex view
-                protein_col_name = None
-                protein_value = None
-                for pcol, pval in row.items():
-                    if pcol.lower() in ['protein', 'protein_file', 'protein_path']:
-                        protein_col_name = pcol
-                        protein_value = str(pval) if not pd.isna(pval) else "N/A"
-                        break
-                
                 # Find actual processed protein filename
-                processed_protein_file = None
                 chimerax_script = None
                 pymol_script = None
                 if protein_value and protein_value != "N/A":
-                    prot_filename = protein_value.split('/')[-1] if '/' in protein_value else protein_value
-                    
-                    # Look for processed protein file
                     for base_name, files in visualization_files.items():
                         if base_name in prot_filename or prot_filename.replace('.pdb', '').replace('-pocket1', '').replace('-pocket2', '').replace('-pocket3', '') in base_name:
                             processed_protein_file = files.get('processed_pdb')
                             chimerax_script = files.get('chimerax_script')
                             pymol_script = files.get('pymol_script')
                             break
-                
+
                 if processed_protein_file:
                     # Single Mol* preview button: open in-app Mol* preview with both URLs
                     html.append(f'''
@@ -250,7 +248,7 @@ def create_sortable_table(df, output_dir: Optional[str] = None):
         row_counter += 1
     html.append('</tbody>')
     html.append('</table>')
-    
+
     return '\n'.join(html)
 
 def scan_visualization_files(output_dir):

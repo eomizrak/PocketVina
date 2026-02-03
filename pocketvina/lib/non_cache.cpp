@@ -129,10 +129,10 @@ fl non_cache::eval_deriv(      model& m, fl v) const { // clean up
 
 /*Added by Glinttsd
 */
-std::vector<grid> non_cache::get_grids()const { 
+const std::vector<grid>& non_cache::get_grids()const {
 	assert(false); // This function should not be called!
-	std::vector<grid> g;
-	return g;
+	static const std::vector<grid> empty;
+	return empty;
 };
 
 int non_cache::get_atu()const {

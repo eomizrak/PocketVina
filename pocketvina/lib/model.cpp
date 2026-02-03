@@ -404,6 +404,7 @@ void model::append(const model& m) {
 	t.coords_append(     atoms, m     .atoms);
 
 	m_num_movable_atoms += m.m_num_movable_atoms;
+	atom_to_ligand.clear();
 }
 
 ///////////////////  end  MODEL::APPEND /////////////////////////
@@ -805,10 +806,22 @@ void model::assign_types() {
 *       3.没有符合条件的则返回ligands容器的大小
 */
 sz model::find_ligand(sz a) const {
+	if(atom_to_ligand.size() == atoms.size() && a < atom_to_ligand.size())
+		return atom_to_ligand[a];
 	VINA_FOR_IN(i, ligands)
 		if(a >= ligands[i].begin && a < ligands[i].end)
 			return i;
 	return ligands.size();
+}
+
+void model::build_atom_to_ligand() {
+	atom_to_ligand.assign(atoms.size(), ligands.size());
+	VINA_FOR_IN(i, ligands) {
+		const ligand& lig = ligands[i];
+		VINA_RANGE(j, lig.begin, lig.end)
+			if(j < atom_to_ligand.size())
+				atom_to_ligand[j] = i;
+	}
 }
 
 /*
@@ -873,19 +886,25 @@ szv model::bonded_to(sz a, sz n) const {
 * 
 */
 void model::initialize_pairs(const distance_type_matrix& mobility) {
+	const sz ligand_count = ligands.size();
+	const atom_type::t typing = atom_typing_used();
+	const sz n = num_atom_types(typing);
+	const bool has_map = (atom_to_ligand.size() == atoms.size());
+
 	VINA_FOR_IN(i, atoms) {
-		sz i_lig = find_ligand(i);
+		const sz i_lig = has_map ? atom_to_ligand[i] : find_ligand(i);
+		const sz t1 = atoms[i].get(typing);
+		const bool t1_valid = (t1 < n);
 		szv bonded_atoms = bonded_to(i, 3);
 		VINA_RANGE(j, i+1, atoms.size()) {
 			if(i >= m_num_movable_atoms && j >= m_num_movable_atoms) continue; // exclude inflex-inflex
 			if(mobility(i, j) == DISTANCE_VARIABLE && !has(bonded_atoms, j)) {
-				sz t1 = atoms[i].get  (atom_typing_used());
-				sz t2 = atoms[j].get  (atom_typing_used());
-				sz n  = num_atom_types(atom_typing_used());
-				if(t1 < n && t2 < n) { // exclude, say, Hydrogens
+				const sz t2 = atoms[j].get(typing);
+				if(t1_valid && t2 < n) { // exclude, say, Hydrogens
 					sz type_pair_index = triangular_matrix_index_permissive(n, t1, t2);
 					interacting_pair ip(type_pair_index, i, j);
-					if(i_lig < ligands.size() && find_ligand(j) == i_lig)
+					const sz j_lig = has_map ? atom_to_ligand[j] : find_ligand(j);
+					if(i_lig < ligand_count && j_lig == i_lig)
 						ligands[i_lig].pairs.push_back(ip);
 					else
 						other_pairs.push_back(ip);
@@ -909,6 +928,7 @@ void model::initialize_pairs(const distance_type_matrix& mobility) {
 void model::initialize(const distance_type_matrix& mobility) {
 	VINA_FOR_IN(i, ligands)
 		ligands[i].set_range();
+	build_atom_to_ligand();
 	assign_bonds(mobility);
 	assign_types();
 	initialize_pairs(mobility);
@@ -1380,38 +1400,75 @@ fl model::eval_intramolecular(const precalculate& p, const vec& v, const conf& c
 	VINA_FOR_IN(i, ligands)
 		e += eval_interacting_pairs(p, v[0], ligands[i].pairs, coords); // coords instead of internal coords
 
-	sz nat = num_atom_types(atom_typing_used());
+	const atom_type::t typing = atom_typing_used();
+	const sz nat = num_atom_types(typing);
 	const fl cutoff_sqr = p.cutoff_sqr();
+	const sz ligand_count = ligands.size();
+	const bool has_map = (atom_to_ligand.size() == atoms.size());
 
 	// flex-rigid
-	VINA_FOR(i, num_movable_atoms()) {
-		if(find_ligand(i) < ligands.size()) continue; // we only want flex-rigid interaction
-		const atom& a = atoms[i];
-		sz t1 = a.get(atom_typing_used());
-		if(t1 >= nat) continue;
-		VINA_FOR_IN(j, grid_atoms) {
-			const atom& b = grid_atoms[j];
-			sz t2 = b.get(atom_typing_used());
-			if(t2 >= nat) continue;
-			fl r2 = vec_distance_sqr(coords[i], b.coords);
+	if(has_map) {
+		VINA_FOR(i, num_movable_atoms()) {
+			if(atom_to_ligand[i] < ligand_count) continue; // we only want flex-rigid interaction
+			const atom& a = atoms[i];
+			sz t1 = a.get(typing);
+			if(t1 >= nat) continue;
+			VINA_FOR_IN(j, grid_atoms) {
+				const atom& b = grid_atoms[j];
+				sz t2 = b.get(typing);
+				if(t2 >= nat) continue;
+				fl r2 = vec_distance_sqr(coords[i], b.coords);
+				if(r2 < cutoff_sqr) {
+					sz type_pair_index = triangular_matrix_index_permissive(nat, t1, t2);
+					fl this_e = p.eval_fast(type_pair_index, r2);
+					curl(this_e, v[1]);
+					e += this_e;
+				}
+			}
+		}
+
+		// flex-flex
+		VINA_FOR_IN(i, other_pairs) {
+			const interacting_pair& pair = other_pairs[i];
+			if(atom_to_ligand[pair.a] < ligand_count || atom_to_ligand[pair.b] < ligand_count) continue; // we only need flex-flex
+			fl r2 = vec_distance_sqr(coords[pair.a], coords[pair.b]);
 			if(r2 < cutoff_sqr) {
-				sz type_pair_index = triangular_matrix_index_permissive(nat, t1, t2);
-				fl this_e = p.eval_fast(type_pair_index, r2);
-				curl(this_e, v[1]);
+				fl this_e = p.eval_fast(pair.type_pair_index, r2);
+				curl(this_e, v[2]);
 				e += this_e;
 			}
 		}
 	}
+	else {
+		VINA_FOR(i, num_movable_atoms()) {
+			if(find_ligand(i) < ligands.size()) continue; // we only want flex-rigid interaction
+			const atom& a = atoms[i];
+			sz t1 = a.get(typing);
+			if(t1 >= nat) continue;
+			VINA_FOR_IN(j, grid_atoms) {
+				const atom& b = grid_atoms[j];
+				sz t2 = b.get(typing);
+				if(t2 >= nat) continue;
+				fl r2 = vec_distance_sqr(coords[i], b.coords);
+				if(r2 < cutoff_sqr) {
+					sz type_pair_index = triangular_matrix_index_permissive(nat, t1, t2);
+					fl this_e = p.eval_fast(type_pair_index, r2);
+					curl(this_e, v[1]);
+					e += this_e;
+				}
+			}
+		}
 
-	// flex-flex
-	VINA_FOR_IN(i, other_pairs) {
-		const interacting_pair& pair = other_pairs[i];
-		if(find_ligand(pair.a) < ligands.size() || find_ligand(pair.b) < ligands.size()) continue; // we only need flex-flex
-		fl r2 = vec_distance_sqr(coords[pair.a], coords[pair.b]);
-		if(r2 < cutoff_sqr) {
-			fl this_e = p.eval_fast(pair.type_pair_index, r2);
-			curl(this_e, v[2]);
-			e += this_e;
+		// flex-flex
+		VINA_FOR_IN(i, other_pairs) {
+			const interacting_pair& pair = other_pairs[i];
+			if(find_ligand(pair.a) < ligands.size() || find_ligand(pair.b) < ligands.size()) continue; // we only need flex-flex
+			fl r2 = vec_distance_sqr(coords[pair.a], coords[pair.b]);
+			if(r2 < cutoff_sqr) {
+				fl this_e = p.eval_fast(pair.type_pair_index, r2);
+				curl(this_e, v[2]);
+				e += this_e;
+			}
 		}
 	}
 	return e;

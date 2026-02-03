@@ -36,6 +36,14 @@ fl rmsd_upper_bound(const vecv& a, const vecv& b) {
 		acc += vec_distance_sqr(a[i], b[i]);
 	return (a.size() > 0) ? std::sqrt(acc / a.size()) : 0;
 }
+fl rmsd_upper_bound_sqr(const vecv& a, const vecv& b) {
+	VINA_CHECK(a.size() == b.size());
+	fl acc = 0;
+	VINA_FOR_IN(i, a)
+		acc += vec_distance_sqr(a[i], b[i]);
+	return (a.size() > 0) ? (acc / a.size()) : 0;
+}
+
 
 
 /*
@@ -49,11 +57,16 @@ fl rmsd_upper_bound(const vecv& a, const vecv& b) {
 
 std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
 	std::pair<sz, fl> tmp(b.size(), max_fl);          //max_fl=1.79769e+308
+	fl best_rmsd_sqr = max_fl;
 	VINA_FOR_IN(i, b) { 
-		fl res = rmsd_upper_bound(a, b[i].coords);
-		if(i == 0 || res < tmp.second)
-			tmp = std::pair<sz, fl>(i, res);
+		fl res_sqr = rmsd_upper_bound_sqr(a, b[i].coords);
+		if(i == 0 || res_sqr < best_rmsd_sqr) {
+			best_rmsd_sqr = res_sqr;
+			tmp.first = i;
+		}
 	}
+	if(tmp.first < b.size() && best_rmsd_sqr < max_fl)
+		tmp.second = std::sqrt(best_rmsd_sqr);
 	return tmp;
 }
 
@@ -70,6 +83,7 @@ std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
 
 */
 void add_to_output_container(output_container& out, const output_type& t, fl min_rmsd, sz max_size) {
+	if(max_size == 0) return;
 	std::pair<sz, fl> closest_rmsd = find_closest(t.coords, out);
 	if(closest_rmsd.first < out.size() && closest_rmsd.second < min_rmsd) { // have a very similar one
 		if(t.e < out[closest_rmsd.first].e) { // the new one is better, apparently
@@ -77,11 +91,19 @@ void add_to_output_container(output_container& out, const output_type& t, fl min
 		}
 	}
 	else { // nothing similar
-		if(out.size() < max_size)   //new¿ª±ÙµÄ¿Õ¼äÔÚ¶ÑÉÏ£¬¶øÒ»°ãÉùÃ÷µÄ±äÁ¿´æ·ÅÔÚÕ»ÉÏ
-			out.push_back(new output_type(t)); // the last one had the worst energy - replacing 
-		else
-			if(!out.empty() && t.e < out.back().e) // FIXME? - just changed
-				out.back() = t; // FIXME? slow
+		if(out.size() < max_size)   //newå¼€è¾Ÿçš„ç©ºé—´åœ¨å †ä¸Šï¼Œè€Œä¸€èˆ¬å£°æ˜Žçš„å˜é‡å­˜æ”¾åœ¨æ ˆä¸Š
+			out.push_back(new output_type(t));
+		else if(!out.empty()) {
+			sz worst_i = 0;
+			fl worst_e = out[0].e;
+			VINA_FOR_IN(i, out) {
+				if(out[i].e > worst_e) {
+					worst_e = out[i].e;
+					worst_i = i;
+				}
+			}
+			if(t.e < worst_e)
+				out[worst_i] = t; // FIXME? slow
+		}
 	}
-	out.sort();
 }
