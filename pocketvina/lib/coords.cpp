@@ -119,6 +119,7 @@ static inline std::pair<sz, fl> find_closest_sqr_limited(const vecv& a, const ou
 	·最后将out向量以out结构体中e进行升序排序
 
 */
+// Note: this function does not sort 'out'. Callers must sort when order matters.
 void add_to_output_container(output_container& out, const output_type& t, fl min_rmsd, sz max_size) {
 	if(max_size == 0) return;
 	const fl min_rmsd_sqr = min_rmsd * min_rmsd;

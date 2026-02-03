@@ -27,6 +27,7 @@
 #include <cmath> // for ceila
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/system/error_code.hpp>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/filesystem/exception.hpp>
 #include <boost/filesystem/convenience.hpp> // filesystem::basename
@@ -839,8 +840,31 @@ Thank you!\n";
 
 			boost::filesystem::create_directories(out_dir);
 			for (boost::filesystem::directory_iterator it(ligand_directory), end; it != end; ++it) {
-				if (!boost::filesystem::is_regular_file(it->path()))
-					continue;
+				const boost::filesystem::path entry_path = it->path();
+				boost::system::error_code ec;
+				bool accept = boost::filesystem::is_regular_file(entry_path, ec);
+				if (!accept) {
+					// Accept symlinks only if they resolve to a regular file target.
+					const boost::filesystem::file_status st = boost::filesystem::symlink_status(entry_path, ec);
+					if (ec || !boost::filesystem::is_symlink(st))
+						continue;
+					const boost::filesystem::path resolved = boost::filesystem::canonical(entry_path, ec);
+					if (ec) {
+						if (verbosity > 1) {
+							log << "WARNING: skipping broken symlink: " << entry_path.string();
+							log.endl();
+						}
+						continue;
+					}
+					accept = boost::filesystem::is_regular_file(resolved, ec);
+					if (!accept || ec) {
+						if (verbosity > 1) {
+							log << "WARNING: skipping symlink that does not resolve to a regular file: " << entry_path.string();
+							log.endl();
+						}
+						continue;
+					}
+				}
 				std::vector<std::string> tmp = { it->path().string() };
 				ligand_names.push_back(tmp);
 				const std::string filename = it->path().filename().string();
