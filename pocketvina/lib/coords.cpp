@@ -55,20 +55,28 @@ fl rmsd_upper_bound_sqr(const vecv& a, const vecv& b) {
 	·µ»Øtmp<2,7.74597>
 */
 
-std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
+std::pair<sz, fl> find_closest_sqr(const vecv& a, const output_container& b) {
 	std::pair<sz, fl> tmp(b.size(), max_fl);          //max_fl=1.79769e+308
 	fl best_rmsd_sqr = max_fl;
-	VINA_FOR_IN(i, b) { 
+	VINA_FOR_IN(i, b) {
 		fl res_sqr = rmsd_upper_bound_sqr(a, b[i].coords);
 		if(i == 0 || res_sqr < best_rmsd_sqr) {
 			best_rmsd_sqr = res_sqr;
 			tmp.first = i;
 		}
 	}
-	if(tmp.first < b.size() && best_rmsd_sqr < max_fl)
-		tmp.second = std::sqrt(best_rmsd_sqr);
+	if(tmp.first < b.size())
+		tmp.second = best_rmsd_sqr;
 	return tmp;
 }
+
+std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
+	std::pair<sz, fl> tmp = find_closest_sqr(a, b);
+	if(tmp.first < b.size() && tmp.second < max_fl)
+		tmp.second = std::sqrt(tmp.second);
+	return tmp;
+}
+
 
 
 /*
@@ -84,10 +92,11 @@ std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
 */
 void add_to_output_container(output_container& out, const output_type& t, fl min_rmsd, sz max_size) {
 	if(max_size == 0) return;
-	std::pair<sz, fl> closest_rmsd = find_closest(t.coords, out);
-	if(closest_rmsd.first < out.size() && closest_rmsd.second < min_rmsd) { // have a very similar one
-		if(t.e < out[closest_rmsd.first].e) { // the new one is better, apparently
-			out[closest_rmsd.first] = t; // FIXME? slow
+	const fl min_rmsd_sqr = min_rmsd * min_rmsd;
+	std::pair<sz, fl> closest_rmsd_sqr = find_closest_sqr(t.coords, out);
+	if(closest_rmsd_sqr.first < out.size() && closest_rmsd_sqr.second < min_rmsd_sqr) { // have a very similar one
+		if(t.e < out[closest_rmsd_sqr.first].e) { // the new one is better, apparently
+			out[closest_rmsd_sqr.first] = t; // FIXME? slow
 		}
 	}
 	else { // nothing similar

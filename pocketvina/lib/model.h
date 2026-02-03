@@ -439,6 +439,8 @@ private:
 	//声明一个interacting_pairs容器other_pairs
 	interacting_pairs other_pairs; // all except internal to one ligand: ligand-other ligands; ligand-flex/inflex; flex-flex/inflex
 
+	szv atom_to_ligand;
+
 	sz m_num_movable_atoms; //声明一个unsigned int类型数据
 	atom_type::t m_atom_typing_used;//声明一个t类型数据，t是枚举类型
 public:

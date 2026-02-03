@@ -23,6 +23,7 @@
 #include "model.h"
 #include "file.h"
 #include "curl.h"
+#include <algorithm>
 
 
 /*
@@ -896,9 +897,10 @@ void model::initialize_pairs(const distance_type_matrix& mobility) {
 		const sz t1 = atoms[i].get(typing);
 		const bool t1_valid = (t1 < n);
 		szv bonded_atoms = bonded_to(i, 3);
+		std::sort(bonded_atoms.begin(), bonded_atoms.end());
 		VINA_RANGE(j, i+1, atoms.size()) {
 			if(i >= m_num_movable_atoms && j >= m_num_movable_atoms) continue; // exclude inflex-inflex
-			if(mobility(i, j) == DISTANCE_VARIABLE && !has(bonded_atoms, j)) {
+			if(mobility(i, j) == DISTANCE_VARIABLE && !std::binary_search(bonded_atoms.begin(), bonded_atoms.end(), j)) {
 				const sz t2 = atoms[j].get(typing);
 				if(t1_valid && t2 < n) { // exclude, say, Hydrogens
 					sz type_pair_index = triangular_matrix_index_permissive(n, t1, t2);

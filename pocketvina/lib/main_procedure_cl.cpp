@@ -638,7 +638,6 @@ void main_procedure_cl(cache& c, const std::vector<model>& ms,  const precalcula
 			//assert(result_vina[i].coords.size()== mis_ptr->)
 			add_to_output_container(outs[ligand_count], result_vina[i], par.mc.min_rmsd, par.mc.num_saved_mins);
 		}
-		outs[ligand_count].sort();
 		// VINA_CHECK(!outs[ligand_count].empty());
 		// VINA_CHECK(outs[ligand_count].front().e <= outs[ligand_count].back().e);
 
