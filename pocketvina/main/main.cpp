@@ -26,6 +26,7 @@
 #include <vector> // ligand paths
 #include <cmath> // for ceila
 #include <boost/program_options.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/filesystem/exception.hpp>
 #include <boost/filesystem/convenience.hpp> // filesystem::basename
@@ -44,7 +45,6 @@
 #include "tee.h"
 #include "coords.h" // add_to_output_container
 #include "main_procedure_cl.h"
-#include <experimental/filesystem>
 #include "../lib/json.hpp" // Taken from https://github.com/nlohmann/json/blob/develop/single_include/nlohmann/json.hpp
 
 using boost::filesystem::path;
@@ -122,12 +122,14 @@ void refine_structure(model& m, const precalculate& prec, non_cache& nc, output_
 	quasi_newton quasi_newton_par;
 	quasi_newton_par.max_steps = max_steps;
 	const fl slope_orig = nc.slope;
+	fl slope = 100;
 	VINA_FOR(p, 5) {
-		nc.slope = 100 * std::pow(10.0, 2.0 * p);
+		nc.slope = slope;
 		quasi_newton_par(m, prec, nc, out, g, cap);
 		m.set(out.c); // just to be sure
 		if (nc.within(m))
 			break;
+		slope *= 100;
 	}
 	out.coords = m.get_heavy_atom_movable_coords();
 	if (!nc.within(m))
@@ -221,7 +223,7 @@ void do_search(model& m, const boost::optional<model>& ref, const scoring_functi
 		par(m, out_cont, prec, ig, prec_widened, ig_widened, corner1, corner2, generator);
 		//done(verbosity, log);
 		
-		std::cout << std::endl;
+		std::cout << '\n';
 		doing(verbosity, "Refining results", log);
 		VINA_FOR_IN(i, out_cont)
 			refine_structure(m, prec, nc, out_cont[i], authentic_v, par.mc.ssd_par.evals);
@@ -237,7 +239,10 @@ void do_search(model& m, const boost::optional<model>& ref, const scoring_functi
 		}
 
 		const fl out_min_rmsd = 1;
-		out_cont = remove_redundant(out_cont, out_min_rmsd);
+		{
+			output_container reduced = remove_redundant(out_cont, out_min_rmsd);
+			out_cont.swap(reduced);
+		}
 
 		done(verbosity, log);
 
@@ -316,12 +321,12 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 
 	if (search_depth != 0) {
 		assert(search_depth >= 1);
-		par.mc.search_depth.resize(ligand_num);
-		par.mc.search_depth = std::vector<int>(ligand_num, search_depth);
+		par.mc.search_depth.assign(ligand_num, search_depth);
 		printf("Search_depth is fixed to %d\n", search_depth);
 	}
 	else {
 		printf("Using heuristic search_depth\n");
+		par.mc.search_depth.reserve(ligand_num);
 		for (int ligand_count = 0; ligand_count < ligand_num; ligand_count++) {
 			double tmp_steps;
 			if(rilc_bfgs==1){tmp_steps = 1;}
@@ -332,6 +337,7 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 	}
 	par.mc.thread = thread;
 
+	par.mc.ssd_par.bfgs_steps.reserve(ligand_num);
 	for (int ligand_count = 0; ligand_count < ligand_num; ligand_count++) {
 		par.mc.ssd_par.bfgs_steps.push_back(unsigned((25 + ms[ligand_count].num_movable_atoms()) / 3));
 	}
@@ -347,9 +353,9 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 
 	std::vector<non_cache> nc;
 
+	nc.reserve(ligand_num);
 	for (int ligand_count = 0; ligand_count < ligand_num; ligand_count++) {
-		non_cache tmp(ms[ligand_count], gd, &prec, slope);
-		nc.push_back(tmp); // if gd has 0 n's, this will not constrain anything
+		nc.emplace_back(ms[ligand_count], gd, &prec, slope); // if gd has 0 n's, this will not constrain anything
 	}
 
 	doing(verbosity, "Analyzing the binding site", log);
@@ -361,16 +367,15 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 	
 	const vec authentic_v(1000, 1000, 1000);
 	const scoring_function& sf = wt;
-	std::cout << std::endl;
+	std::cout << '\n';
 
 	for (int ligand_count = 0; ligand_count < ligand_num; ligand_count++) {
 
-		output_container out_cont = out_conts[ligand_count];
-		model m = ms[ligand_count];
+		output_container& out_cont = out_conts[ligand_count];
+		model& m = ms[ligand_count];
 
-		std::string name_tmp = out_names[ligand_count];
-		//int int1 = name_tmp.find("\\"); int int2 = name_tmp.find(".pdbqt");
-		std::string name_tmp2 = name_tmp.substr(name_tmp.find("\\")+1, name_tmp.length() - name_tmp.find("\\") -11);
+		const boost::filesystem::path ligand_out_path(out_names[ligand_count]);
+		const std::string name_tmp2 = ligand_out_path.stem().string();
 		std::cout << "Refining ligand " << name_tmp2 << " results...";
 #ifndef NO_REFINEMENT
 		VINA_FOR_IN(i, out_cont)
@@ -386,7 +391,7 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 			out_cont.sort();
 		}
 		else{
-			std::cout << std::endl << "No results found for ligand " << name_tmp2 << std::endl << std::endl;
+			std::cout << '\n' << "No results found for ligand " << name_tmp2 << "\n\n";
 			continue;
 		}
 
@@ -409,12 +414,15 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 		sz how_many = 0;
 		std::vector<std::string> remarks;
 		json output_json;
-		std::string receptor_basename = boost::filesystem::basename(receptor_file);
-		std::string ligand_basename = boost::filesystem::basename(out_names[ligand_count]);
-		std::string ligand_directory = boost::filesystem::path(out_names[ligand_count]).parent_path().string();
-		std::string output_prefix = ligand_directory + "/" + receptor_basename + "-pocket" + std::to_string(pocket_rank) + "-" + ligand_basename;
-		std::string output_pdbqt = output_prefix + ".pdbqt";
-        output_json[receptor_basename + "-pocket" + std::to_string(pocket_rank) + "-" + ligand_basename + "-" + "results"] = json::array();
+		const std::string receptor_basename = boost::filesystem::path(receptor_file).stem().string();
+		const std::string ligand_basename = ligand_out_path.stem().string();
+		const boost::filesystem::path ligand_directory = ligand_out_path.parent_path();
+		const boost::filesystem::path output_prefix = ligand_directory / (receptor_basename + "-pocket" + std::to_string(pocket_rank) + "-" + ligand_basename);
+		const std::string output_pdbqt = output_prefix.string() + ".pdbqt";
+		const std::string output_key = receptor_basename + "-pocket" + std::to_string(pocket_rank) + "-" + ligand_basename + "-results";
+		auto& output_arr = output_json[output_key];
+		output_arr = json::array();
+		const auto round_to = [](double v, double step) { return std::round(v / step) * step; };
 		VINA_FOR_IN(i, out_cont) {
 			if (how_many >= num_modes || !not_max(out_cont[i].e) || out_cont[i].e > out_cont[0].e + energy_range) break; // check energy_range sanity FIXME
 			++how_many;
@@ -428,24 +436,21 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 				<< "  " << std::setw(9) << std::setprecision(3) << ub; // FIXME need user-readable error messages in case of failures
 
 			remarks.push_back(vina_remark(out_cont[i].e, lb, ub));
-			log.endl();
-			// Format the numbers for precision
-			std::ostringstream affinity_stream, lb_stream, ub_stream;
-			affinity_stream << std::fixed << std::setprecision(1) << out_cont[i].e;
-			lb_stream << std::fixed << std::setprecision(3) << lb;
-			ub_stream << std::fixed << std::setprecision(3) << ub;
-			output_json[receptor_basename + "-pocket" + std::to_string(pocket_rank) + "-" + ligand_basename + "-" + "results"].push_back({
+			log << '\n';
+			output_arr.push_back({
 				{"mode", i + 1},
-				{"affinity (kcal/mol)", std::stod(affinity_stream.str())},  // Convert back to double if necessary
-				{"dist from rmsd l.b.", std::stod(lb_stream.str())},
-				{"dist from rmsd u.b.", std::stod(ub_stream.str())},
+				{"affinity (kcal/mol)", round_to(out_cont[i].e, 0.1)},
+				{"dist from rmsd l.b.", round_to(lb, 0.001)},
+				{"dist from rmsd u.b.", round_to(ub, 0.001)},
 				{"pocket rank", pocket_rank}
 			});
 		}
 		std::cout << "Writing ligand " << output_pdbqt << " output...\n";
 		write_all_output(m, out_cont, how_many, output_pdbqt, remarks);
 		// Write JSON file
-        std::string json_file = output_pdbqt.substr(0, output_pdbqt.find_last_of('.')) + ".json";
+        boost::filesystem::path json_path(output_pdbqt);
+        json_path.replace_extension(".json");
+        std::string json_file = json_path.string();
         std::ofstream json_out(json_file);
         if (json_out.is_open()) {
             json_out << output_json.dump(4);  // Pretty print with 4 spaces
@@ -461,7 +466,7 @@ void main_procedure(std::vector<model>& ms, const boost::optional<model>& ref, /
 			log.endl();
 		}
 		done(verbosity, log);
-		std::cout << std::endl;
+		std::cout << '\n';
 	}
 }
 
@@ -832,16 +837,18 @@ Thank you!\n";
 			else
 				out_dir = ligand_directory + "_out";
 
-			std::experimental::filesystem::create_directory(out_dir);
-			for (const auto& entry : std::experimental::filesystem::directory_iterator(ligand_directory)) {
-				std::vector<std::string> tmp = { entry.path().string() };
+			boost::filesystem::create_directories(out_dir);
+			for (boost::filesystem::directory_iterator it(ligand_directory), end; it != end; ++it) {
+				if (!boost::filesystem::is_regular_file(it->path()))
+					continue;
+				std::vector<std::string> tmp = { it->path().string() };
 				ligand_names.push_back(tmp);
-				std::string delimiter1 = ".pdbqt";
-				std::string delimiter2 = ligand_directory;
-				std::string tmp2 = entry.path().string();
-				std::string tmp3 = tmp2.substr(0, tmp2.find(delimiter1)) + "_out.pdbqt";
-				std::string tmp4 = out_dir + tmp3.substr(ligand_directory.length(), tmp3.length());
-				out_names.push_back(tmp4);
+				const std::string filename = it->path().filename().string();
+				const std::string base = (it->path().extension() == ".pdbqt")
+					? it->path().stem().string()
+					: filename;
+				const boost::filesystem::path out_path = boost::filesystem::path(out_dir) / (base + "_out.pdbqt");
+				out_names.push_back(out_path.string());
 			}
 			std::cout << "Output will be in the directory " << out_dir << std::endl;
 		}
@@ -852,10 +859,12 @@ Thank you!\n";
 			out_names.push_back(out_name);
 		}
 
-		doing(verbosity, "Reading input", log);
-		std::vector<model> ms;
-		std::vector<std::string> out_names_valid;
-		for (int i = 0; i < ligand_names.size(); i++) {
+			doing(verbosity, "Reading input", log);
+			std::vector<model> ms;
+			std::vector<std::string> out_names_valid;
+			ms.reserve(ligand_names.size());
+			out_names_valid.reserve(ligand_names.size());
+			for (int i = 0; i < ligand_names.size(); i++) {
 			try {
 				ms.push_back(parse_bundle(rigid_name_opt, flex_name_opt, ligand_names[i]));
 				out_names_valid.push_back(out_names[i]);
