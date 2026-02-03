@@ -44,6 +44,21 @@ fl rmsd_upper_bound_sqr(const vecv& a, const vecv& b) {
 	return (a.size() > 0) ? (acc / a.size()) : 0;
 }
 
+static inline fl rmsd_upper_bound_sqr_limited(const vecv& a, const vecv& b, fl limit_sqr) {
+	VINA_CHECK(a.size() == b.size());
+	if(a.size() == 0) return 0;
+	if(limit_sqr >= max_fl / 2) // effectively unbounded
+		return rmsd_upper_bound_sqr(a, b);
+	fl acc = 0;
+	const fl limit_acc = limit_sqr * a.size();
+	VINA_FOR_IN(i, a) {
+		acc += vec_distance_sqr(a[i], b[i]);
+		if(acc >= limit_acc)
+			return limit_sqr;
+	}
+	return acc / a.size();
+}
+
 
 
 /*
@@ -59,7 +74,7 @@ std::pair<sz, fl> find_closest_sqr(const vecv& a, const output_container& b) {
 	std::pair<sz, fl> tmp(b.size(), max_fl);          //max_fl=1.79769e+308
 	fl best_rmsd_sqr = max_fl;
 	VINA_FOR_IN(i, b) {
-		fl res_sqr = rmsd_upper_bound_sqr(a, b[i].coords);
+		fl res_sqr = rmsd_upper_bound_sqr_limited(a, b[i].coords, best_rmsd_sqr);
 		if(i == 0 || res_sqr < best_rmsd_sqr) {
 			best_rmsd_sqr = res_sqr;
 			tmp.first = i;
@@ -78,6 +93,20 @@ std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
 }
 
 
+static inline std::pair<sz, fl> find_closest_sqr_limited(const vecv& a, const output_container& b, fl limit_sqr) {
+	std::pair<sz, fl> tmp(b.size(), limit_sqr);
+	fl best_rmsd_sqr = limit_sqr;
+	VINA_FOR_IN(i, b) {
+		fl res_sqr = rmsd_upper_bound_sqr_limited(a, b[i].coords, best_rmsd_sqr);
+		if(res_sqr < best_rmsd_sqr) {
+			best_rmsd_sqr = res_sqr;
+			tmp.first = i;
+			tmp.second = res_sqr;
+		}
+	}
+	return tmp;
+}
+
 
 /*
 	input——out：output_type结构体向量，t：output_type结构体，min_rmsd：double，max_size：unint
@@ -93,7 +122,7 @@ std::pair<sz, fl> find_closest(const vecv& a, const output_container& b) {
 void add_to_output_container(output_container& out, const output_type& t, fl min_rmsd, sz max_size) {
 	if(max_size == 0) return;
 	const fl min_rmsd_sqr = min_rmsd * min_rmsd;
-	std::pair<sz, fl> closest_rmsd_sqr = find_closest_sqr(t.coords, out);
+	std::pair<sz, fl> closest_rmsd_sqr = find_closest_sqr_limited(t.coords, out, min_rmsd_sqr);
 	if(closest_rmsd_sqr.first < out.size() && closest_rmsd_sqr.second < min_rmsd_sqr) { // have a very similar one
 		if(t.e < out[closest_rmsd_sqr.first].e) { // the new one is better, apparently
 			out[closest_rmsd_sqr.first] = t; // FIXME? slow
